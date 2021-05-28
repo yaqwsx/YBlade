@@ -1,0 +1,10 @@
+{
+	"autodeskProduct":	"Fusion360",
+	"type":	"script",
+	"author":	"Jan Mrázek",
+	"description":	{
+		"":	"Simple script to import qblade"
+	},
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true
+}
