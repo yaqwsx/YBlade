@@ -7,9 +7,8 @@ import math
 import sys 
 from copy import deepcopy
 
-sys.stdout = open('C:\\Users\\email\\Downloads\python_output.txt', 'w')
+handlers = []
 sys.stderr = sys.stdout
-print("RUnning")
 sys.stdout.flush()
 
 def readProfile(profileFile):
@@ -38,14 +37,12 @@ def findClosest(target, l):
     """
     Find value in l closest target. Return index of such a value
     """
-    print("Target: ", target)
     minVal = l[0]
     minIdx = 0
     for i, e in enumerate(l):
         if abs(target - minVal) > abs(target - e):
             minVal = e
             minIdx = i
-    print("  Got: ", minVal)
     return minIdx
 
 def deduceOffset(blade, profile):
@@ -53,10 +50,6 @@ def deduceOffset(blade, profile):
     posIdx = findClosest(blade[0].thread, [x for x, y in positives])
     negatives = list([(x, y) for x, y in profile if y < 0])
     negIdx = findClosest(blade[0].thread, [x for x, y in negatives])
-
-    print(positives)
-    print(negatives)
-    print(positives[posIdx], negatives[negIdx])
 
     mid = (positives[posIdx][1] + negatives[negIdx][1]) / 2
 
@@ -229,69 +222,143 @@ def ramerdouglas(line, dist):
 def reduceProfile(profile, minDistance):
     return ramerdouglas(profile, minDistance)
 
+def inputFile(ui, title):
+    fileDlg = ui.createFileDialog()
+    fileDlg.isMultiSelectEnabled = False
+    fileDlg.title = title
+    fileDlg.filter = "*.*"
+    
+    # Show file open dialog
+    dlgResult = fileDlg.showOpen()
+    if dlgResult == adsk.core.DialogResults.DialogOK:
+        return fileDlg.filenames[0]
+    else:
+        raise RuntimeError("No file specified")      
+
 def run(context):
     ui = None
     try:
         app = adsk.core.Application.get()
         ui  = app.userInterface
+        commandDefinitions = ui.commandDefinitions
+
         design = app.activeProduct
         rootComp = design.activeComponent 
-        sketches = rootComp.sketches
-        planes = rootComp.constructionPlanes
-        xyPlane = rootComp.xYConstructionPlane
 
-        with open("C:\\Users\\email\\Downloads\\NACA 4412.dat") as f:
-            profileData = readProfile(f)
-        reducedProfileData = reduceProfile(profileData, 0.005)
+        qbladeFile = inputFile(ui, "Select QBlade specification file")
+        profileFile = inputFile(ui, "Select profile file")
 
-        with open("C:\\Users\\email\\Downloads\\BasicBlade.txt") as f:
-            blade = readBlade(f)
-        deduceOffset(blade, profileData)
+        class YBladeExecuteHandler(adsk.core.CommandEventHandler):
+            def __init__(self):
+                super().__init__()
+            def notify(self, args):
+                try:
+                    command = args.firingEvent.sender
+                    inputs = command.commandInputs
+                    params = {input.id: input.value for input in inputs}
+                    
+                    sketches = rootComp.sketches
+                    planes = rootComp.constructionPlanes
+                    xyPlane = rootComp.xYConstructionPlane
 
-        profiles = []
-        prevLen = -1000
-        prevTwist = -1000
-        leftInfillRail = adsk.core.ObjectCollection.create()
-        rightInfillRail = adsk.core.ObjectCollection.create()
-        for i, b in enumerate(blade):
-            if abs(b.len - prevLen) < 1 and abs(b.twist - prevTwist) < 1 and i != len(blade) - 1:
-                continue
-            prevLen = b.len
-            prevTwist = b.twist
-            planeInput = planes.createInput()
-            offsetValue = adsk.core.ValueInput.createByReal(b.pos)
-            planeInput.setByOffset(xyPlane, offsetValue)
-            plane = planes.add(planeInput)
-            plane.name = f"profile_{i}"
-            profileSketch = sketches.add(plane)
-            profileSketch.isLightBulbOn = False
-            spline = drawProfile(profileSketch, profileData, b.len, b.twist, b.thread, b.offset)
-            lines = drawProfileLines(profileSketch, reducedProfileData, b.len, b.twist, b.thread, b.offset)
-            dirPoint = adsk.core.Point3D.create(0, 0, 0)
-            offsetCurves = profileSketch.offset(lines, dirPoint, 0.13)
-            profiles.append(profileSketch)
+                    with open(params["profileFile"]) as f:
+                        profileData = readProfile(f)
+                    reducedProfileData = reduceProfile(profileData, params["simplificationFactor"])
 
-            points = collectLinePoints(offsetCurves)
-            lp = getLeftmostPoint(points)
-            leftInfillRail.add(Point3D.create(lp[0], lp[1], b.pos))
-            rp = getRightmostPoint(points)
-            rightInfillRail.add(Point3D.create(rp[0], rp[1], b.pos))
+                    with open(params["bladeFile"]) as f:
+                        blade = readBlade(f)
+                    deduceOffset(blade, profileData)
 
-        guideSketch = sketches.add(xyPlane)
-        guideLine1 = drawGuideLine(guideSketch, blade, (0, 0))
-        guideLine2 = drawGuideLine(guideSketch, blade, (1, 0))
-        innerGuide1 = drawLinestring(guideSketch, leftInfillRail)
-        innerGuide2 = drawLinestring(guideSketch, rightInfillRail)
-        sweepLine = guideSketch.sketchCurves.sketchLines.addByTwoPoints(
-            Point3D.create(0, 0, blade[0].pos),
-            Point3D.create(0, 0, blade[-1].pos))
+                    profiles = []
+                    prevLen = -1000
+                    prevTwist = -1000
+                    leftInfillRail = adsk.core.ObjectCollection.create()
+                    rightInfillRail = adsk.core.ObjectCollection.create()
+                    for i, b in enumerate(blade):
+                        if abs(b.len - prevLen) < 1 and abs(b.twist - prevTwist) < 1 and i != len(blade) - 1:
+                            continue
+                        prevLen = b.len
+                        prevTwist = b.twist
+                        planeInput = planes.createInput()
+                        offsetValue = adsk.core.ValueInput.createByReal(b.pos)
+                        planeInput.setByOffset(xyPlane, offsetValue)
+                        plane = planes.add(planeInput)
+                        plane.name = f"profile_{i}"
+                        profileSketch = sketches.add(plane)
+                        profileSketch.isLightBulbOn = False
+                        spline = drawProfile(profileSketch, profileData, b.len, b.twist, b.thread, b.offset)
+                        lines = drawProfileLines(profileSketch, reducedProfileData, b.len, b.twist, b.thread, b.offset)
+                        dirPoint = adsk.core.Point3D.create(0, 0, 0)
+                        offsetCurves = profileSketch.offset(lines, dirPoint, params["thickness"])
+                        profiles.append(profileSketch)
 
-        hollowBladeAlt(rootComp, profiles, [innerGuide1, innerGuide2])
-        extrudeBlade(rootComp, profiles, sweepLine, guideLine1)
+                        points = collectLinePoints(offsetCurves)
+                        lp = getLeftmostPoint(points)
+                        leftInfillRail.add(Point3D.create(lp[0], lp[1], b.pos))
+                        rp = getRightmostPoint(points)
+                        rightInfillRail.add(Point3D.create(rp[0], rp[1], b.pos))
 
-        sys.stdout.close()
+                    guideSketch = sketches.add(xyPlane)
+                    guideLine1 = drawGuideLine(guideSketch, blade, (0, 0))
+                    guideLine2 = drawGuideLine(guideSketch, blade, (1, 0))
+                    innerGuide1 = drawLinestring(guideSketch, leftInfillRail)
+                    innerGuide2 = drawLinestring(guideSketch, rightInfillRail)
+                    sweepLine = guideSketch.sketchCurves.sketchLines.addByTwoPoints(
+                        Point3D.create(0, 0, blade[0].pos),
+                        Point3D.create(0, 0, blade[-1].pos))
 
+                    hollowBladeAlt(rootComp, profiles, [innerGuide1, innerGuide2])
+                    extrudeBlade(rootComp, profiles, sweepLine, guideLine1)
+                    
+                    adsk.terminate()
+                except:
+                    if ui:
+                        ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
+
+        class YBladeDestroyHandler(adsk.core.CommandEventHandler):
+            def __init__(self):
+                super().__init__()
+            def notify(self, args):
+                sys.stdout.close()
+
+        class YBladeCreateHandler(adsk.core.CommandCreatedEventHandler):
+            def __init__(self):
+                super().__init__()        
+            def notify(self, args):
+                try:
+                    cmd = args.command
+                    onExecute = YBladeExecuteHandler()
+                    cmd.execute.add(onExecute)
+                    onDestroy = YBladeDestroyHandler()
+                    cmd.destroy.add(onDestroy)
+                    # keep the handler referenced beyond this function
+                    handlers.append(onExecute)
+                    handlers.append(onDestroy)
+
+                    inputs = cmd.commandInputs
+                    inputs.addStringValueInput("profileFile", "Profile file path", profileFile)
+                    inputs.addStringValueInput("bladeFile", "Blade file path", qbladeFile)
+                    inputs.addDistanceValueCommandInput("thickness", "Shell thickness", adsk.core.ValueInput.createByString("1mm"))
+                    inputs.addValueInput("simplificationFactor", "Infill simplification factor", "", adsk.core.ValueInput.createByReal(0.005))
+                except:
+                    if ui:
+                        ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
+
+        cmdDef = commandDefinitions.itemById("YBlade")
+        if not cmdDef:
+            cmdDef = commandDefinitions.addButtonDefinition("YBlade",
+                    "Import QBlade",
+                    "Create a blade.",
+                    "./resources")
+    
+        onCommandCreated = YBladeCreateHandler()
+        cmdDef.commandCreated.add(onCommandCreated)
+        # keep the handler referenced beyond this function
+        handlers.append(onCommandCreated)
+        inputs = adsk.core.NamedValues.create()
+        cmdDef.execute(inputs)
+        adsk.autoTerminate(False)
     except:
-        print('Failed:\n{}'.format(traceback.format_exc()))
+        print("Failed:\n{}".format(traceback.format_exc()))
         if ui:
-            ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
+            ui.messageBox("Failed:\n{}".format(traceback.format_exc()))
