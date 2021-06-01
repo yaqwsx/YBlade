@@ -1,6 +1,6 @@
 # YBlade - Import QBlade blades into Fusion 360
 
-Simple script for Fusion 360 that takes [QBlade] blade description and
+Simple script for Fusion 360 that takes [QBlade](https://http://www.q-blade.org/) blade description and
 constructs the blade:
 
 ![result.png](result.png)
